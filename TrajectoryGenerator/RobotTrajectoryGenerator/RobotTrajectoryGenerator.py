@@ -456,8 +456,22 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
 
             transform.SetMatrixTransformToParent(mat)
             transformArray.append(transform)
+            slicer.mrmlScene.AddNode(transform) # This is just for visualization
 
-            slicer.mrmlScene.AddNode(transform)
+            # This is the one we'll publish with
+            tr = vtk.vtkTransform()
+            tr.SetMatrix(mat)
+            trCollection = vtk.vtkTransformCollection()
+            trCollection.AddItem(tr)
+
+        ros2Node = slicer.mrmlScene.GetFirstNodeByName("ros2:node:slicer")
+        publisher = ros2Node.CreateAndAddPublisher("vtkMRMLROS2PublisherPoseArrayNode", "/slicer_posearray")
+        publisher.Publish(trCollection) # Publishes a pose array that consists of each matrix in the path
+
+
+
+
+
 
 
 #
