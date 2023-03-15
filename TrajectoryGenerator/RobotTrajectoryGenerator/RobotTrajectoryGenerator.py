@@ -141,6 +141,8 @@ class RobotTrajectoryGeneratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
         self.ui.tracePathButton.connect("clicked(bool)", self.onTracePathButton)
         self.ui.clearPathButton.connect("clicked(bool)", self.onClearPathButton)
         self.ui.generateTrajectoryButton.connect("clicked(bool)", self.onGenerateTrajectoryButton)
+        self.ui.sendPoseArrayButton.connect("clicked(bool)", self.onSendPoseArrayButton)
+        self.ui.flipButton.connect("clicked(bool)", self.onFlipButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -284,6 +286,14 @@ class RobotTrajectoryGeneratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
 
         self.logic.generateTrajectory()
 
+    def onSendPoseArrayButton(self):
+
+        self.logic.SendPoseArray()
+
+    def onFlipButton(self):
+
+        self.logic.flipNorms()
+
 
 #
 # RobotTrajectoryGeneratorLogic
@@ -306,6 +316,8 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         ScriptedLoadableModuleLogic.__init__(self)
         self.ptsToFollow = slicer.mrmlScene.GetFirstNodeByName("PtToFollow")
         self.trajectoryPoints = slicer.mrmlScene.GetFirstNodeByName("Trajectory") # will be None if this doesn't work
+        self.trCollection = vtk.vtkTransformCollection()
+        self.previousZ = [0,0,0]
 
     def setDefaultParameters(self, parameterNode):
         """
@@ -401,12 +413,16 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
 
     def generateTrajectory(self):
 
+        self.RemoveTransforms()
+
         numControlPts = self.trajectoryPoints.GetNumberOfControlPoints()
         if numControlPts < 3:
             print("Not enough points to generate a trajectory. Need at least 3.")
         transformArray = []
 
-        for j in range(1, numControlPts): # start at 1 because we need a previous point
+        # TODO: go add the transform before and the most recent transform for the beginning and the end of the post
+
+        for j in range(1, (numControlPts - 1)):
 
             p1 = [0,0,0,0]
             self.trajectoryPoints.GetNthFiducialWorldCoordinates(j - 1, p1)
@@ -422,10 +438,19 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
 
             v1 = [(p3[0] - p2[0]), (p3[1] - p2[1]), (p3[2] - p2[2])]
             v2 = [(p1[0] - p2[0]), (p1[1] - p2[1]), (p1[2] - p2[2])]
+            v3 = [(p3[0] - p1[0]), (p3[1] - p1[1]), (p3[2] - p1[2])]
 
             z = np.cross(v1, v2)
             z_norm = z / np.linalg.norm(z)
-            x = v1
+            # x = v1 # trying the average instead
+
+            # angle between vectors 1 and 2
+            angle = np.absolute(np.dot(v1, v2))
+            print("angle: {}".format(angle))
+            if angle > 90:
+                z_norm = self.previousZ
+
+            x = v3
             x_norm = x / np.linalg.norm(x)
 
             y_norm = np.cross(z_norm, x_norm) # do I need to norm this too?
@@ -434,6 +459,7 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
             print("X: {}".format(x_norm))
             print("Y: {}".format(y_norm))
             print("Z: {}".format(z_norm))
+
 
             # Pose is a vtkMRMLLinearTransformNode that is comprised of x, y, z, and p2
             transform = slicer.vtkMRMLLinearTransformNode()
@@ -456,17 +482,118 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
 
             transform.SetMatrixTransformToParent(mat)
             transformArray.append(transform)
-            slicer.mrmlScene.AddNode(transform) # This is just for visualization
+            transformNode = slicer.mrmlScene.AddNode(transform) # This is just for visualization
+
+            # This is going to create a dependency
+            slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked()
+            coordinateModels = slicer.mrmlScene.GetNodesByName("CoordinateModel")
+            mostRecentCoordinateModel = coordinateModels.GetItemAsObject(coordinateModels.GetNumberOfItems() - 1)
+            mostRecentCoordinateModel.SetAndObserveTransformNodeID(transformNode.GetID())
 
             # This is the one we'll publish with
             tr = vtk.vtkTransform()
             tr.SetMatrix(mat)
-            trCollection = vtk.vtkTransformCollection()
-            trCollection.AddItem(tr)
+            self.trCollection.AddItem(tr)
+
+    def flipNorms(self):
+
+        self.RemoveTransforms()
+
+        numControlPts = self.trajectoryPoints.GetNumberOfControlPoints()
+        if numControlPts < 3:
+            print("Not enough points to generate a trajectory. Need at least 3.")
+        transformArray = []
+
+        # TODO: go add the transform before and the most recent transform for the beginning and the end of the post
+
+        for j in range(1, (numControlPts - 1)):
+            p1 = [0, 0, 0, 0]
+            self.trajectoryPoints.GetNthFiducialWorldCoordinates(j - 1, p1)
+            p1 = p1[0:3]
+
+            p2 = [0, 0, 0, 0]
+            self.trajectoryPoints.GetNthFiducialWorldCoordinates(j, p2)
+            p2 = p2[0:3]
+
+            p3 = [0, 0, 0, 0]
+            self.trajectoryPoints.GetNthFiducialWorldCoordinates(j + 1, p3)
+            p3 = p3[0:3]
+
+            v1 = [(p3[0] - p2[0]), (p3[1] - p2[1]), (p3[2] - p2[2])]
+            v2 = [(p1[0] - p2[0]), (p1[1] - p2[1]), (p1[2] - p2[2])]
+            v3 = [(p3[0] - p1[0]), (p3[1] - p1[1]), (p3[2] - p1[2])]
+
+            z = np.cross(v1, v2)
+            z_norm = z / np.linalg.norm(z)
+            z_norm = -z_norm # try flipping
+            # x = v1 # trying the average instead
+            x = v3
+            x_norm = x / np.linalg.norm(x)
+
+
+
+            y_norm = np.cross(z_norm, x_norm)  # do I need to norm this too?
+
+            print("X: {}".format(x_norm))
+            print("Y: {}".format(y_norm))
+            print("Z: {}".format(z_norm))
+
+            # Pose is a vtkMRMLLinearTransformNode that is comprised of x, y, z, and p2
+            transform = slicer.vtkMRMLLinearTransformNode()
+            mat = vtk.vtkMatrix4x4()
+            mat.SetElement(0, 0, x_norm[0])
+            mat.SetElement(1, 0, x_norm[1])  # not sure of order of i, j - double check
+            mat.SetElement(2, 0, x_norm[2])
+
+            mat.SetElement(0, 1, y_norm[0])
+            mat.SetElement(1, 1, y_norm[1])
+            mat.SetElement(2, 1, y_norm[2])
+
+            mat.SetElement(0, 2, z_norm[0])
+            mat.SetElement(1, 2, z_norm[1])
+            mat.SetElement(2, 2, z_norm[2])
+
+            mat.SetElement(0, 3, p2[0])
+            mat.SetElement(1, 3, p2[1])
+            mat.SetElement(2, 3, p2[2])
+
+            transform.SetMatrixTransformToParent(mat)
+            transformArray.append(transform)
+            transformNode = slicer.mrmlScene.AddNode(transform)  # This is just for visualization
+
+            # This is going to create a dependency
+            slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked()
+            coordinateModels = slicer.mrmlScene.GetNodesByName("CoordinateModel")
+            mostRecentCoordinateModel = coordinateModels.GetItemAsObject(coordinateModels.GetNumberOfItems() - 1)
+            mostRecentCoordinateModel.SetAndObserveTransformNodeID(transformNode.GetID())
+
+            # This is the one we'll publish with
+            tr = vtk.vtkTransform()
+            tr.SetMatrix(mat)
+            self.trCollection.AddItem(tr)
+
+
+
+    def SendPoseArray(self):
 
         ros2Node = slicer.mrmlScene.GetFirstNodeByName("ros2:node:slicer")
         publisher = ros2Node.CreateAndAddPublisher("vtkMRMLROS2PublisherPoseArrayNode", "/slicer_posearray")
-        publisher.Publish(trCollection) # Publishes a pose array that consists of each matrix in the path
+        publisher.Publish(self.trCollection) # Publishes a pose array that consists of each matrix in the path
+
+    def RemoveTransforms(self):
+
+        transforms = slicer.mrmlScene.GetNodesByClass("vtkMRMLLinearTransformNode")
+        for j in range(0, transforms.GetNumberOfItems()):
+            transform = transforms.GetItemAsObject(j)
+            transformName = transform.GetName()
+            if ("LinearTransform" in transformName):
+                slicer.mrmlScene.RemoveNode(transform)
+
+        models = slicer.mrmlScene.GetNodesByName("CoordinateModel")
+        for j in range(0, models.GetNumberOfItems()):
+            model = models.GetItemAsObject(j)
+            slicer.mrmlScene.RemoveNode(model)
+
 
 
 

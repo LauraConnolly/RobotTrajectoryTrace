@@ -68,7 +68,21 @@
    <item>
     <widget class="QPushButton" name="generateTrajectoryButton">
      <property name="text">
-      <string>Generate and send trajectory</string>
+      <string>Generate trajectory</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="flipButton">
+     <property name="text">
+      <string>Flip</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="sendPoseArrayButton">
+     <property name="text">
+      <string>Send trajectory</string>
      </property>
     </widget>
    </item>
