@@ -385,13 +385,29 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         # do a distance calculation before adding a point
         numControlPts = self.trajectoryPoints.GetNumberOfControlPoints()
 
-        pos = [0, 0, 0, 0]
-        self.ptsToFollow.GetNthFiducialWorldCoordinates(0, pos)
-        pos_new = pos[0:3]
+        # pos = [0, 0, 0, 0]
+        # self.ptsToFollow.GetNthFiducialWorldCoordinates(0, pos)
+        # pos_new = pos[0:3]
+
+        mat = vtk.vtkMatrix4x4()
+        self.observedLookup.GetMatrixTransformToWorld(mat)
+        transform = slicer.vtkMRMLLinearTransformNode()
+        transform.SetMatrixTransformToParent(mat)
+        pos_new = [mat.GetElement(0,3), mat.GetElement(1,3), mat.GetElement(2,3)]
+
+        # This is the one we'll publish with
+        tr = vtk.vtkTransform()
+        tr.SetMatrix(mat)
 
         if numControlPts == 0:
             self.trajectoryPoints.InsertControlPointWorld(0, pos_new)
-            # Just need to insert the first point into the list
+            transformNode = slicer.mrmlScene.AddNode(transform)  # This is just for visualization
+            # This is going to create a dependency
+            slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked()
+            coordinateModels = slicer.mrmlScene.GetNodesByName("CoordinateModel")
+            mostRecentCoordinateModel = coordinateModels.GetItemAsObject(coordinateModels.GetNumberOfItems() - 1)
+            mostRecentCoordinateModel.SetAndObserveTransformNodeID(transformNode.GetID())
+            self.trCollection.AddItem(tr)
             return
 
         pos = [0, 0, 0, 0]
@@ -405,6 +421,13 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
 
         if euclidean_distance > 5.0:
             self.trajectoryPoints.InsertControlPointWorld(numControlPts, pos_new)
+            transformNode = slicer.mrmlScene.AddNode(transform)  # This is just for visualization
+            # This is going to create a dependency
+            slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked()
+            coordinateModels = slicer.mrmlScene.GetNodesByName("CoordinateModel")
+            mostRecentCoordinateModel = coordinateModels.GetItemAsObject(coordinateModels.GetNumberOfItems() - 1)
+            mostRecentCoordinateModel.SetAndObserveTransformNodeID(transformNode.GetID())
+            self.trCollection.AddItem(tr)
 
     def clearTrajectory(self):
 
