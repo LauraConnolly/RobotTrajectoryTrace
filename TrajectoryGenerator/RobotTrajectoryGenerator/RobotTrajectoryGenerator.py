@@ -385,10 +385,6 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         # do a distance calculation before adding a point
         numControlPts = self.trajectoryPoints.GetNumberOfControlPoints()
 
-        # pos = [0, 0, 0, 0]
-        # self.ptsToFollow.GetNthFiducialWorldCoordinates(0, pos)
-        # pos_new = pos[0:3]
-
         mat = vtk.vtkMatrix4x4()
         self.observedLookup.GetMatrixTransformToWorld(mat)
         transform = slicer.vtkMRMLLinearTransformNode()
@@ -406,6 +402,7 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
             slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked()
             coordinateModels = slicer.mrmlScene.GetNodesByName("CoordinateModel")
             mostRecentCoordinateModel = coordinateModels.GetItemAsObject(coordinateModels.GetNumberOfItems() - 1)
+            mostRecentCoordinateModel.SetDisplayVisibility(False)
             mostRecentCoordinateModel.SetAndObserveTransformNodeID(transformNode.GetID())
             self.trCollection.AddItem(tr)
             return
@@ -426,6 +423,7 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
             slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked()
             coordinateModels = slicer.mrmlScene.GetNodesByName("CoordinateModel")
             mostRecentCoordinateModel = coordinateModels.GetItemAsObject(coordinateModels.GetNumberOfItems() - 1)
+            mostRecentCoordinateModel.SetDisplayVisibility(False)
             mostRecentCoordinateModel.SetAndObserveTransformNodeID(transformNode.GetID())
             self.trCollection.AddItem(tr)
 
