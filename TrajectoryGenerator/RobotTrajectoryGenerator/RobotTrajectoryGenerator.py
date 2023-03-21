@@ -272,6 +272,7 @@ class RobotTrajectoryGeneratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
 
     def onTracePathButton(self):
 
+        print("Tracing started")
         for j in range(0, 5000, 20):
             timer = qt.QTimer()
             timer.singleShot(j, lambda: self.logic.getPointPosition())
@@ -359,19 +360,13 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
 
     def createTrajectoryFiducials(self):
 
-        if slicer.mrmlScene.GetFirstNodeByName('PtToFollow') is None:
-            self.ptsToFollow = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode')
-            self.ptsToFollow.SetName('PtToFollow')
-        if self.observedLookup is not None:
-            self.ptsToFollow.SetAndObserveTransformNodeID(self.observedLookup.GetID())
-
         if slicer.mrmlScene.GetFirstNodeByName('Trajectory') is None:
             self.trajectoryPoints = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode')
             self.trajectoryPoints.SetName('Trajectory')
 
     def getPointPosition(self):
 
-        if self.ptsToFollow is None or self.trajectoryPoints is None:
+        if self.trajectoryPoints is None:
             self.createTrajectoryFiducials()
 
         # do a distance calculation before adding a point
@@ -403,10 +398,7 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         self.trajectoryPoints.GetNthFiducialWorldCoordinates(numControlPts - 1, pos)
         pos_prev = pos[0:3]
 
-        print("Pos previous {}".format(pos_prev))
-        print("Pos new {}".format(pos_new))
         euclidean_distance = math.dist(pos_prev, pos_new)
-        print("Euclidean distance: {}".format(euclidean_distance))
 
         if euclidean_distance > 5.0:
             self.trajectoryPoints.InsertControlPointWorld(numControlPts, pos_new)
@@ -424,6 +416,9 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         if self.trajectoryPoints is not None:
             self.trajectoryPoints.RemoveAllMarkups()
         self.RemoveTransforms()
+        self.trCollection = vtk.vtkTransformCollection()
+        print('Trajectory has been cleared')
+
 
 
     def SendPoseArray(self):
@@ -433,6 +428,7 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         if publisher is None:
             publisher = ros2Node.CreateAndAddPublisher("vtkMRMLROS2PublisherPoseArrayNode", "/slicer_posearray")
         publisher.Publish(self.trCollection) # Publishes a pose array that consists of each matrix in the path
+        print('Pose array published')
 
     def RemoveTransforms(self):
 
