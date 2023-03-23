@@ -242,48 +242,35 @@ class RobotTrajectoryGeneratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
 
         wasModified = self._parameterNode.StartModify()  # Modify all properties in a single batch
 
-        self._parameterNode.SetNodeReferenceID("InputVolume", self.ui.inputSelector.currentNodeID)
-        self._parameterNode.SetNodeReferenceID("OutputVolume", self.ui.outputSelector.currentNodeID)
-        self._parameterNode.SetParameter("Threshold", str(self.ui.imageThresholdSliderWidget.value))
-        self._parameterNode.SetParameter("Invert", "true" if self.ui.invertOutputCheckBox.checked else "false")
-        self._parameterNode.SetNodeReferenceID("OutputVolumeInverse", self.ui.invertedOutputSelector.currentNodeID)
 
         self._parameterNode.EndModify(wasModified)
 
-    def onApplyButton(self):
-        """
-        Run processing when user clicks "Apply" button.
-        """
-        with slicer.util.tryWithErrorDisplay("Failed to compute results.", waitCursor=True):
-
-            # Compute output
-            self.logic.process(self.ui.inputSelector.currentNode(), self.ui.outputSelector.currentNode(),
-                               self.ui.imageThresholdSliderWidget.value, self.ui.invertOutputCheckBox.checked)
-
-            # Compute inverted output (if needed)
-            if self.ui.invertedOutputSelector.currentNode():
-                # If additional output volume is selected then result with inverted threshold is written there
-                self.logic.process(self.ui.inputSelector.currentNode(), self.ui.invertedOutputSelector.currentNode(),
-                                   self.ui.imageThresholdSliderWidget.value, not self.ui.invertOutputCheckBox.checked, showResult=False)
 
     def updateObservedLookup(self):
-
+        """
+        This function is called when a lookup is selected in the dropdown combo box. This lookup is used as the reference point for tracing.
+        """
         self.logic.setObservedLookup(slicer.mrmlScene.GetNodeByID(self.ui.lookupSelector.currentNodeID))
 
     def onTracePathButton(self):
-
+        """
+        This function is called when a user selects the 'Trace path' button.
+        """
         print("Tracing started")
-        for j in range(0, 5000, 20):
+        for j in range(0, 5000, 20): # the upper bound here can be changed depending on how long you want to trace
             timer = qt.QTimer()
-            timer.singleShot(j, lambda: self.logic.getPointPosition())
+            timer.singleShot(j, lambda: self.logic.AddToTrajectory())
 
     def onClearPathButton(self):
-
+        """
+        This function is called when the user presses 'Clear path' button.
+        """
         self.logic.clearTrajectory()
 
-
     def onSendPoseArrayButton(self):
-
+        """
+        This function is called when the user presses 'Send trajectory' button.
+        """
         self.logic.SendPoseArray()
 
 
@@ -307,51 +294,14 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         Called when the logic class is instantiated. Can be used for initializing member variables.
         """
         ScriptedLoadableModuleLogic.__init__(self)
-        self.ptsToFollow = slicer.mrmlScene.GetFirstNodeByName("PtToFollow")
         self.trajectoryPoints = slicer.mrmlScene.GetFirstNodeByName("Trajectory") # will be None if this doesn't work
         self.trCollection = vtk.vtkTransformCollection()
-        self.previousZ = [0,0,0]
 
     def setDefaultParameters(self, parameterNode):
         """
         Initialize parameter node with default settings.
         """
-        if not parameterNode.GetParameter("Threshold"):
-            parameterNode.SetParameter("Threshold", "100.0")
-        if not parameterNode.GetParameter("Invert"):
-            parameterNode.SetParameter("Invert", "false")
-
-    def process(self, inputVolume, outputVolume, imageThreshold, invert=False, showResult=True):
-        """
-        Run the processing algorithm.
-        Can be used without GUI widget.
-        :param inputVolume: volume to be thresholded
-        :param outputVolume: thresholding result
-        :param imageThreshold: values above/below this threshold will be set to 0
-        :param invert: if True then values above the threshold will be set to 0, otherwise values below are set to 0
-        :param showResult: show output volume in slice viewers
-        """
-
-        if not inputVolume or not outputVolume:
-            raise ValueError("Input or output volume is invalid")
-
-        import time
-        startTime = time.time()
-        logging.info('Processing started')
-
-        # Compute the thresholded output volume using the "Threshold Scalar Volume" CLI module
-        cliParams = {
-            'InputVolume': inputVolume.GetID(),
-            'OutputVolume': outputVolume.GetID(),
-            'ThresholdValue': imageThreshold,
-            'ThresholdType': 'Above' if invert else 'Below'
-        }
-        cliNode = slicer.cli.run(slicer.modules.thresholdscalarvolume, None, cliParams, wait_for_completion=True, update_display=showResult)
-        # We don't need the CLI module node anymore, remove it to not clutter the scene with it
-        slicer.mrmlScene.RemoveNode(cliNode)
-
-        stopTime = time.time()
-        logging.info(f'Processing completed in {stopTime-startTime:.2f} seconds')
+        print('Not using parameter node.')
 
     def setObservedLookup(self, observedLookup):
 
@@ -364,65 +314,87 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
             self.trajectoryPoints = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode')
             self.trajectoryPoints.SetName('Trajectory')
 
-    def getPointPosition(self):
+    def AddToTrajectory(self):
+        """
+        This function gets the x, y, z coordinate of the observed lookup and adds it as a fiducial for visualization.
+        It also takes the entire pose (from the lookup) and saves it to a transform collection for publishing later.
+        """
 
+        # Check if the fiducial list exists already
         if self.trajectoryPoints is None:
             self.createTrajectoryFiducials()
 
-        # do a distance calculation before adding a point
+        # Check how many fiducials are already in the traced path
         numControlPts = self.trajectoryPoints.GetNumberOfControlPoints()
 
+        # Get the x, y, z position from the observed lookup
         mat = vtk.vtkMatrix4x4()
         self.observedLookup.GetMatrixTransformToWorld(mat)
         transform = slicer.vtkMRMLLinearTransformNode()
         transform.SetMatrixTransformToParent(mat)
         pos_new = [mat.GetElement(0,3), mat.GetElement(1,3), mat.GetElement(2,3)]
 
-        # This is the one we'll publish with
+        # Store the matrix as a transform (so we can save the full lookup later)
         tr = vtk.vtkTransform()
         tr.SetMatrix(mat)
 
+        # If it's the first point in the trajectory - we always add it to the list
         if numControlPts == 0:
             self.trajectoryPoints.InsertControlPointWorld(0, pos_new)
-            transformNode = slicer.mrmlScene.AddNode(transform)  # This is just for visualization
-            # This is going to create a dependency
-            slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked()
+
+            # FOR VISUALIZATION - not necessary for functions
+            transformNode = slicer.mrmlScene.AddNode(transform)
+            slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked() # dependency on SlicerIGT
             coordinateModels = slicer.mrmlScene.GetNodesByName("CoordinateModel")
             mostRecentCoordinateModel = coordinateModels.GetItemAsObject(coordinateModels.GetNumberOfItems() - 1)
             mostRecentCoordinateModel.SetDisplayVisibility(False)
             mostRecentCoordinateModel.SetAndObserveTransformNodeID(transformNode.GetID())
+
+            # Save to a transform collection list for publishing later on
             self.trCollection.AddItem(tr)
             return
 
+        # If it's not the first point in the trajectory - check how much the lookup has moved (only add to the list if it's moved a certain distance)
+
+        # Get the last point in the trajectory list
         pos = [0, 0, 0, 0]
         self.trajectoryPoints.GetNthFiducialWorldCoordinates(numControlPts - 1, pos)
         pos_prev = pos[0:3]
 
+        # Calculate the distance between new and previous point
         euclidean_distance = math.dist(pos_prev, pos_new)
 
         if euclidean_distance > 5.0:
+            # Append to the list if the distance threshold is achieved
             self.trajectoryPoints.InsertControlPointWorld(numControlPts, pos_new)
+
+            # FOR VISUALIZATION - not necessary for functions
             transformNode = slicer.mrmlScene.AddNode(transform)  # This is just for visualization
-            # This is going to create a dependency
             slicer.modules.createmodels.widgetRepresentation().OnCreateCoordinateClicked()
             coordinateModels = slicer.mrmlScene.GetNodesByName("CoordinateModel")
             mostRecentCoordinateModel = coordinateModels.GetItemAsObject(coordinateModels.GetNumberOfItems() - 1)
             mostRecentCoordinateModel.SetDisplayVisibility(False)
             mostRecentCoordinateModel.SetAndObserveTransformNodeID(transformNode.GetID())
+
+            # Save to a transform collection list for publishing later on
             self.trCollection.AddItem(tr)
 
-    def clearTrajectory(self):
 
+    def clearTrajectory(self):
+        """
+        Clear the fiducial list, the nodes that have been added for visualization and the transform collection so the
+        user can trace a new path.
+        """
         if self.trajectoryPoints is not None:
             self.trajectoryPoints.RemoveAllMarkups()
         self.RemoveTransforms()
         self.trCollection = vtk.vtkTransformCollection()
         print('Trajectory has been cleared')
 
-
-
     def SendPoseArray(self):
-
+        """
+        Take the transform collection and publish the trajectory as a pose array.
+        """
         ros2Node = slicer.mrmlScene.GetFirstNodeByName("ros2:node:slicer")
         publisher = slicer.mrmlScene.GetFirstNodeByName('ros2:pub:/slicer_posearray')
         if publisher is None:
@@ -431,7 +403,9 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         print('Pose array published')
 
     def RemoveTransforms(self):
-
+        """
+        Remove the transform & model nodes from the scene for visualization.
+        """
         transforms = slicer.mrmlScene.GetNodesByClass("vtkMRMLLinearTransformNode")
         for j in range(0, transforms.GetNumberOfItems()):
             transform = transforms.GetItemAsObject(j)
@@ -443,8 +417,6 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         for j in range(0, models.GetNumberOfItems()):
             model = models.GetItemAsObject(j)
             slicer.mrmlScene.RemoveNode(model)
-
-
 
 
 
