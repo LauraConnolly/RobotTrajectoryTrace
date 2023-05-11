@@ -32,6 +32,7 @@
         <property name="nodeTypes" stdset="0">
          <stringlist>
           <string>vtkMRMLROS2Tf2LookupNode</string>
+          <string>vtkMRMLLinearTransformNode</string>
          </stringlist>
         </property>
         <property name="showChildNodeTypes" stdset="0">
@@ -69,6 +70,13 @@
     <widget class="QPushButton" name="sendPoseArrayButton">
      <property name="text">
       <string>Send trajectory</string>
+     </property>
+    </widget>
+   </item>
+   <item>
+    <widget class="QPushButton" name="generateProjectionButton">
+     <property name="text">
+      <string>Generate projection</string>
      </property>
     </widget>
    </item>

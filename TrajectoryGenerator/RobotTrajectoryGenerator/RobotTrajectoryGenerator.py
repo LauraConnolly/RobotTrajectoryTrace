@@ -9,6 +9,7 @@ from slicer.util import VTKObservationMixin
 import qt
 import numpy as np
 import math
+from scipy.spatial import ConvexHull
 #
 # RobotTrajectoryGenerator
 #
@@ -141,6 +142,7 @@ class RobotTrajectoryGeneratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
         self.ui.tracePathButton.connect("clicked(bool)", self.onTracePathButton)
         self.ui.clearPathButton.connect("clicked(bool)", self.onClearPathButton)
         self.ui.sendPoseArrayButton.connect("clicked(bool)", self.onSendPoseArrayButton)
+        self.ui.generateProjectionButton.connect("clicked(bool)", self.onProjectButton)
 
         # Make sure parameter node is initialized (needed for module reload)
         self.initializeParameterNode()
@@ -273,6 +275,12 @@ class RobotTrajectoryGeneratorWidget(ScriptedLoadableModuleWidget, VTKObservatio
         """
         self.logic.SendPoseArray()
 
+    def onProjectButton(self):
+
+        self.logic.generateProjection()
+
+
+
 
 
 #
@@ -398,7 +406,7 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         ros2Node = slicer.mrmlScene.GetFirstNodeByName("ros2:node:slicer")
         publisher = slicer.mrmlScene.GetFirstNodeByName('ros2:pub:/slicer_posearray')
         if publisher is None:
-            publisher = ros2Node.CreateAndAddPublisher("vtkMRMLROS2PublisherPoseArrayNode", "/slicer_posearray")
+            publisher = ros2Node.CreateAndAddPublisherNode("vtkMRMLROS2PublisherPoseArrayNode", "/slicer_posearray")
         publisher.Publish(self.trCollection) # Publishes a pose array that consists of each matrix in the path
         print('Pose array published')
 
@@ -417,6 +425,84 @@ class RobotTrajectoryGeneratorLogic(ScriptedLoadableModuleLogic):
         for j in range(0, models.GetNumberOfItems()):
             model = models.GetItemAsObject(j)
             slicer.mrmlScene.RemoveNode(model)
+
+    def generateProjection(self):
+        # define the cut plane as the direction of the end effector of the robot
+        # won't use the CT at all
+        # need to grow the tumor
+        model = slicer.mrmlScene.GetFirstNodeByName('TumorModel')
+        arr = slicer.util.arrayFromModelPoints(model)
+
+        # transform the points
+        if model.GetNumberOfNodeReferences("transform") > 0:
+            transform = model.GetNthNodeReference("transform", 0)
+            matrix = transform.GetMatrixTransformToParent()
+
+        transformed_arr = []
+        for j in range(arr.shape[0]):
+            pt = [0,0,0,0]
+            matrix.MultiplyPoint([arr[j, 0], arr[j, 1], arr[j,2], 0], pt)
+            transformed_arr.append(pt[:3])
+        transformed_arr = np.asarray(transformed_arr)
+
+        plane = slicer.mrmlScene.GetFirstNodeByName('P')
+        origin = plane.GetOrigin()
+        normal = plane.GetNormal()
+        normal = normal / np.linalg.norm(normal)
+        shadow = self.project_point_cloud(transformed_arr, origin, normal)
+        fid = slicer.mrmlScene.GetFirstNodeByName('F')
+        # All points
+        # for j in range(shadow.shape[0]):
+        #     fid.AddFiducial(shadow[j, 0], shadow[j, 1], shadow[j, 2], '')
+
+        column_0 = shadow[:, 0]  # 0th column
+        column_2 = shadow[:, 2]  # 2nd column
+        reduced_shadow = np.column_stack((column_0, column_2))
+
+        # Projection can be a few different parts (R, A), (A, S), (R, S)
+        # reduced_shadow = shadow[:, :2]
+        # reduced_shadow = shadow[:, 1:3]
+
+        hull = ConvexHull(reduced_shadow)  # Considering only x and y coordinates (assuming coplanar) - idk if this is the right thing!
+
+        # Extract outline vertices
+        outline = shadow[hull.vertices]
+
+        for j in range(outline.shape[0]):
+            fid.AddFiducial(outline[j, 0], outline[j, 1], outline[j, 2], '')
+            fid.SetNthControlPointLabel(j, '')
+        fid.AddFiducial(outline[0, 0], outline[0, 1], outline[0, 2], '') # to complete the circle
+        fid.SetNthControlPointLabel(fid.GetNumberOfControlPoints() - 1, '')
+
+        # Generate a model that shows you the path
+        markupsToModelNode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsToModelNode')
+        pathModel = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLModelNode')
+        markupsToModelNode.SetNodeReferenceID('InputMarkups', fid.GetID())
+        markupsToModelNode.SetNodeReferenceID('OutputModel', pathModel.GetID())
+        markupsToModelNode.SetModelType(1)
+
+        markupsToModelLogic = slicer.util.getModuleLogic('MarkupsToModel')
+        markupsToModelLogic.UpdateOutputModel(markupsToModelNode)
+
+
+
+    def project_point_cloud(self, point_cloud, origin,  normal):
+        projectedPts = []
+        for j in range(0, point_cloud.shape[0]):
+            point = point_cloud[j, :]
+            v = point - origin
+            dist = np.dot(v, normal)
+            # dist = (v[0] * normal[0]) + (v[1] * normal[1]) + (v[2] * normal[1])
+            projected_point = ((point[0] - (dist * normal[0])), (point[1] - (dist * normal[1])), (point[2] - (dist * normal[2])))
+            projectedPts.append(projected_point)
+        projectedPtArray = np.asarray(projectedPts)
+        return projectedPtArray
+
+
+        # normal_vector = normal_vector / np.linalg.norm(normal_vector)
+        # projection_matrix = np.eye(3) - np.outer(normal_vector, normal_vector)
+        # projected_points = np.dot(point_cloud, projection_matrix.T)
+        # return projected_points[:, :2]
 
 
 
